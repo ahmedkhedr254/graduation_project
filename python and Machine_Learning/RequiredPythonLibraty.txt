@@ -1,0 +1,10 @@
+tensorflow==1.15.0
+opencv-python==3.4.2.16
+keras==2.3.1
+flask_uploads
+Flask==1.1.2
+itsdangerous==1.1.0
+Werkzeug==0.15.2
+numpy>=1.18.1
+imutils
+sklearn
