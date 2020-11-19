@@ -1,6 +1,5 @@
 import cv2
 import os
-from spellchecker import SpellChecker
 import numpy as np
 from sklearn.cluster import KMeans
 from keras.models import model_from_yaml
@@ -12,23 +11,87 @@ from flask_uploads import UploadSet, configure_uploads, IMAGES
 
 myImages=[]
 visited=[]
-spell = SpellChecker()
-def clean3(img):
-    img = cv2.bilateralFilter(img,2,75,75)
-    bin_img = cv2.adaptiveThreshold(img,255,cv2.ADAPTIVE_THRESH_GAUSSIAN_C,cv2.THRESH_BINARY,69,10)
-    return bin_img
-
-
+def distanceBetwenTwoPoint(x1,y1,x2,y2):
+    return np.sqrt(((y1-y2)**2)+((x1-x2)**2))
+    
+def nearestCharacterFromLeft(inndex,contour):
+    global myImages
+    minn=1000000
+    res=0
+    x,y,w,h = cv2.boundingRect(contour)
+    for i in range(len(myImages)):
+        if not i==inndex:
+            xi,yi,wi,hi = cv2.boundingRect(myImages[i])
+            if xi+wi<((x+(x+w))/2):
+                if distanceBetwenTwoPoint(xi+wi,(yi+hi+yi)/2,x,(y+y+h)/2)<minn:
+                    minn=distanceBetwenTwoPoint(xi+wi,(yi+hi+yi)/2,x,(y+y+h)/2)
+                    res=i
+    return res
         
+    
+def nearestCharacterFromRight(inndex,contour):
+    global myImages
+    minn=100000
+    res=0
+    x,y,w,h = cv2.boundingRect(contour)
+    for i in range(len(myImages)):
+        if not i==inndex:
+            xi,yi,wi,hi = cv2.boundingRect(myImages[i])
+            if xi>((x+(x+w))/2):
+                if distanceBetwenTwoPoint(xi,(yi+yi+hi)/2,x+w,(y+y+h)/2)<minn:
+                    minn=distanceBetwenTwoPoint(xi,(yi+yi+hi)/2,x+w,(y+y+h)/2)
+                    res=i
+    return res
 
+
+def dfsLeft(i,LineComponentList):
+    global visited
+    global myImages
+    visited[i]=True
+    LineComponentList.append(i)
+    myLeftChar=nearestCharacterFromLeft(i,myImages[i])
+   # myRightChar=nearestCharacterFromRight(i,LastContourList,LastContourList[i])
+    x,y,w,h = cv2.boundingRect(myImages[i])
+    xLeft,yLeft,wLeft,hLeft = cv2.boundingRect(myImages[myLeftChar])
+    #xRight,yRight,wRight,hRight = cv2.boundingRect(myImages[myRightChar])
+    if( yLeft <(y+h) and (yLeft+hLeft)>y )and not visited[myLeftChar]:
+        dfsLeft(myLeftChar,LineComponentList)
         
-
+        
+def dfsRight(i,LineComponentList):
+    global myImages
+    global visited
+    visited[i]=True
+    LineComponentList.append(i)
+  #  myLeftChar=nearestCharacterFromLeft(i,myImages,LastContourList[i])
+    myRightChar=nearestCharacterFromRight(i,myImages[i])
+    x,y,w,h = cv2.boundingRect(myImages[i])
+  #  xLeft,yLeft,wLeft,hLeft = cv2.boundingRect(LastContourList[myLeftChar])
+    xRight,yRight,wRight,hRight = cv2.boundingRect(myImages[myRightChar])
+    
+        
+    if (yRight <(y+h)and (yRight+hRight)>y) and  not visited[myRightChar]:
+        dfsRight(myRightChar,LineComponentList)
+def getLineCmopenent():
+    global myImages
+    global visited
+    res=[]
+    
+    for i in range(len(myImages)):
+        
+        if not visited[i]:
+            LineComponentList=[]
+            dfsLeft(i,LineComponentList)
+            dfsRight(i,LineComponentList)
+            res.append(LineComponentList)            
+    return res
 
 
 
 def guessQuets(img,loaded_model):
     
      
+    # evaluate loaded model on test data
     img=np.reshape(img, [1,28,28,1])
     img=img/255
     rs=loaded_model.predict(img)
@@ -37,6 +100,7 @@ def guessQuets(img,loaded_model):
 def guessChar(img,loaded_model):
     
      
+    # evaluate loaded model on test data
     img=np.reshape(img, [1,28,28,1])
     img=img/255
     rs=loaded_model.predict(img)
@@ -102,18 +166,27 @@ def resize_image(image):
      
         # Return the new image
         return new_image
-
+def intersection(lst1, lst2): 
+    lst1=lst1.tolist()
+    lst2=lst2.tolist()
+    return [item for item in lst1 if item in lst2] 
 def inside(contour,contours):
     x,y,w,h = cv2.boundingRect(contour)
     midx=((x+w)+x)/2
-    midy=(y+h)+(h)*2
+    midy=(y+h)+(h)+1
     for i in range(len(contours)):
       xi,yi,wi,hi = cv2.boundingRect(contours[i])
       if (xi<midx and midx<xi+wi and   yi<midy and midy<yi+hi   ):
           return (True,i )
     return (False,False)           
         
-
+def isContour1InsideContour2(contour1,contour2):
+    x1,y1,w1,h1 = cv2.boundingRect(contour1)
+    x2,y2,w2,h2 = cv2.boundingRect(contour2)
+    if (x1>=x2 and x1<=x2+w2 and y1>=y2 and y1<=y2+h2) and (x1+w1<=x2+w2 and y1+h1>=y2 and y1+h1<=y2+h2):
+        return True
+    else:
+        return False
 def heightAvg(mycontours):
     sum=0
     for h,tcnt in enumerate(mycontours):
@@ -134,22 +207,22 @@ tf.compat.v1.keras.backend.set_session( sess)
 graph =tf.compat.v1.get_default_graph()
 
 #loadModel
-yaml_file = open('model5.yaml', 'r')
+yaml_file = open('/home/ahmed_m_khedr97/blinds/newmodel.yaml', 'r')
 loaded_model_yaml = yaml_file.read()
 yaml_file.close()
 loaded_model = model_from_yaml(loaded_model_yaml)
 # load weights into new model
-loaded_model.load_weights("model5.h5")
+loaded_model.load_weights("/home/ahmed_m_khedr97/blinds/newmodel.h5")
 print("Loaded model from disk")
 #******************************
 
 #*************load Quets model
-quets_yaml_file = open('quets.yaml', 'r')
+quets_yaml_file = open('/home/ahmed_m_khedr97/blinds/quets.yaml', 'r')
 quets_loaded_model_yaml = quets_yaml_file.read()
 quets_yaml_file.close()
 quets_loaded_model = model_from_yaml(quets_loaded_model_yaml)
 # load weights into new model
-quets_loaded_model.load_weights("quets.h5")
+quets_loaded_model.load_weights("/home/ahmed_m_khedr97/blinds/quets.h5")
 print("Loaded model from disk")
 
 
@@ -167,44 +240,35 @@ def ConvertImageToText(z):
     
     global graph
     global sess
+    #z=cv2.medianBlur(z,5)
     zz=np.zeros((z.shape[0],z.shape[1]))
     #bin_img = cv2.adaptiveThreshold(z,255,cv2.ADAPTIVE_THRESH_MEAN_C,cv2.THRESH_BINARY_INV,81,17)
     bin_img=z
     bin_img1 = bin_img.copy()
     bin_img2 = bin_img.copy()
     
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(1,2))
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(3,3))
     kernel1 = np.array([[1,0,1],[0,1,0],[1,0,1]], dtype = np.uint8)
-    print("cleaning Image.........")
+    # final_thr = cv2.morphologyEx(bin_img, cv2.MORPH_OPEN, kernel)
+    # final_thr = cv2.dilate(bin_img,kernel1,iterations = 1)
+    print("Noise Removal From Image.........")
     
-    bin_img=255-clean3(bin_img)
-    
-    
-    noise_,noise_contours, noise_hierarchy = cv2.findContours(bin_img,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE) 
-    for i in range(len(noise_contours)):
-        x,y,w,h = cv2.boundingRect(noise_contours[i])
-        if ((w*h)/(z.shape[0]*z.shape[1])*100)< ((72/7533441*100)/4):
-            bin_img[y:y+h,x:x+w]=0 
-    
-  
+    bin_img = cv2.adaptiveThreshold(bin_img,255,cv2.ADAPTIVE_THRESH_GAUSSIAN_C,cv2.THRESH_BINARY_INV,69,10)
     
     
-    
-    
-    
-    
-    final_thr = bin_img
+    final_thr = cv2.morphologyEx(bin_img, cv2.MORPH_CLOSE, kernel)
     _,contours, hierarchy = cv2.findContours(final_thr,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE) 
     
     
     for i in range(len(contours)):
         x,y,w,h = cv2.boundingRect(contours[i])
-        if w>0.5*z.shape[1]:
+        if w>0.1*z.shape[1]:
            final_thr[y:y+h,x:x+w]=0 
     kernel = np.ones((2,60),np.uint8)
     copyOf_final_thr=final_thr.copy()
     
     new_final_thr = 255- cv2.dilate(final_thr,kernel,iterations = 1)
+    
     final_thr=new_final_thr
     final_thr=255-final_thr
     
@@ -213,7 +277,7 @@ def ConvertImageToText(z):
     lines=[]
     
     MyLineAxess.sort(key=lambda tup: tup[1])
-    char_,CharContours, Charhierarchy = cv2.findContours(copyOf_final_thr,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE) 
+    _x,CharContours, Charhierarchy = cv2.findContours(copyOf_final_thr,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE) 
     
     
     
@@ -229,12 +293,8 @@ def ConvertImageToText(z):
     for i in range(len(CharContours)):
           x,y,w,h = cv2.boundingRect(CharContours[i])
           area = cv2.contourArea(CharContours[i])
-          myImg=255-copyOf_final_thr[y:y+h,x:x+w]
-          myImg=resize_image(myImg)
           if (h<(heightav*3/4)):
-               with graph.as_default():
-                  tf.compat.v1.keras.backend.set_session( sess)
-                  if inside(CharContours[i],CharContours)[0] and guessQuets(myImg,quets_loaded_model)=="." :
+                  if inside(CharContours[i],CharContours)[0]:
                       cont2Index=inside(CharContours[i],CharContours)[1]
                       xi,yi,wi,hi = cv2.boundingRect(CharContours[cont2Index ])
                       concat=np.concatenate((CharContours[i],CharContours[cont2Index]), axis=0)
@@ -244,18 +304,23 @@ def ConvertImageToText(z):
                       myContour.append(concat)
                       isQuates.append(False)
                       
-                      cv2.rectangle(copyOf_final_thr,(xi,y),(xi+wi,yi+hi),(255,255,255),1)
+                      #cv2.rectangle(copyOf_final_thr,(xi,y),(xi+wi,yi+hi),(255,255,255),1)
                   else:
                       
+                     #copyOf_final_thr[y:y+h,x:x+w]=0
+                     #final_thr[y:y+h,x:x+w]=0
                      isQuates[i]=True
+                     #myContour[i]=[]
     
     
     
     _,contours, hierarchy = cv2.findContours(final_thr,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE) 
     
+    
     for i in range(len(contours)):
           x,y,w,h = cv2.boundingRect(contours[i])
           area = area+cv2.contourArea(contours[i])
+          #cv2.rectangle(final_thr,(x,y),(x+w,y+h),(255,255,255),1)
     if len(contours)==0:
         area=0
     else:
@@ -266,6 +331,7 @@ def ConvertImageToText(z):
           if (w*h)>(area/2):
               MyLineAxess.append((contours[i], y) )
               lines.append([])
+              #cv2.rectangle(final_thr,(x,y),(x+w,y+h),(255,255,255),3)
           else:
               final_thr[y:y+h,x:x+w]=0 
     c=0
@@ -286,6 +352,7 @@ def ConvertImageToText(z):
     s=""
     count=0
     lineSpace=[]
+    cv2.imwrite("zxc.png",255-final_thr)
     for i in lines:
         i.sort(key=lambda tup: tup[1])
         lineSpace.append([])
@@ -320,7 +387,6 @@ def ConvertImageToText(z):
                 isqts=i[j][2]
                 myImg=255-copyOf_final_thr[y:y+h,x:x+w]
                 myImg=resize_image(myImg)
-                myImg=255-myImg
                 if not(j==0 ) :
                     x0,y0,w0,h0 = cv2.boundingRect(i[j-1][0])
                     if isqts:
@@ -347,18 +413,46 @@ def ConvertImageToText(z):
                             
                 else:
                     s=s+guessChar(myImg,loaded_model)
+                #cv2.imwrite("w"+str(countt)+".png",myImg)
                 cv2.rectangle(copyOf_final_thr,(x,y),(x+w,y+h),(255,255,255),1)
                 countt=countt+1
         
         
         count=count+1
         s=s+"\n"
-        
     s=s.replace('0', 'o')
-    #s=s.replace('9', 'g')
-    s=s.replace('1', 'l')
+    s=s.replace('9', 'g')
     s=s.lower()
     return s
 
-z = cv2.imread("inputSamples/from_Camera_with_Good_Quality/1.jpg",0)
-print(ConvertImageToText(z))
+
+#************************************************************
+#**********************
+app = Flask(__name__)
+
+app.config['SECRET_KEY'] = 'mysecretkey'
+app.config['UPLOADED_IMAGES_DEST'] = 'images'
+images = UploadSet('images', IMAGES)
+configure_uploads(app, images)
+
+@app.route('/', methods=['GET'])
+def index():
+    img = request.files['image']
+    img.filename = 'x.png'
+    filename = images.save(img)
+    path = "/home/ahmed_m_khedr97/blinds/images/" + filename
+
+    image = cv2.imread(path, 0);
+    text = ConvertImageToText(image)
+    os.remove("/home/ahmed_m_khedr97/blinds/images/" + img.filename)
+    response = make_response(text)
+    return response
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0',port=80)
+
+
+
+
+#************************************************************
+#**********************
